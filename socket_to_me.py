@@ -9,7 +9,10 @@ import gpu
 from gpu_extras.batch import batch_for_shader
 import mathutils
 
-HIGH_LIGHTED_COLOR = (0.5, 0.8, 1, 0.3)
+SOCKET_COLOR = (0, 0.6, 1, 0.1)
+HIGHLIGHTED_COLOR = (0.5, 0.8, 1, 0.3)
+SOCKET_RADIUS = 0.15
+HIGHLIGHTED_RADIUS = 0.2
 
 @dataclass
 class ModularAssetData:
@@ -20,7 +23,6 @@ class ModularAssetData:
 @dataclass
 class SocketData:
     transform:mathutils.Matrix = mathutils.Matrix.Identity(4)
-    color:Tuple[float, float, float, float] = (0, 0.6, 1, 0.1)
     is_highlighted = False
     out_sockets:List['SocketData'] = field(default_factory=list)
     collection_instance:Optional[bpy.types.Object] = None
@@ -61,11 +63,11 @@ def draw(self, context, uv_sphere_verts):
         if socket.collection_instance is not None:
             return
 
-        scale = 0.2 if socket.is_highlighted else 0.15
+        scale = HIGHLIGHTED_RADIUS if socket.is_highlighted else SOCKET_RADIUS
         sphere_verts = [socket.transform.to_translation() + (v * scale) for v in uv_sphere_verts]
         batch:gpu.types.GPUBatch = batch_for_shader(shader, 'TRIS', {"pos": sphere_verts})
 
-        color = HIGH_LIGHTED_COLOR if socket.is_highlighted else socket.color
+        color = HIGHLIGHTED_COLOR if socket.is_highlighted else SOCKET_COLOR
         shader.uniform_float("color", color)
         batch.draw(shader)
 
@@ -94,32 +96,34 @@ class SocketToMeModalOperator(bpy.types.Operator):
             return {'CANCELLED'}
 
         # camera location and camera to mouse ray
-        world_space_mouse_position = bpy_extras.view3d_utils.region_2d_to_location_3d(context.region, context.space_data.region_3d, (event.mouse_region_x, event.mouse_region_y), (0, 0, 0))
-        camera_view_position = context.space_data.region_3d.view_matrix.inverted().translation
-        camera_through_mouse_position_ray = (world_space_mouse_position - camera_view_position).normalized()
+        world_space_mouse_position:mathutils.Vector = bpy_extras.view3d_utils.region_2d_to_location_3d(context.region, context.space_data.region_3d, (event.mouse_region_x, event.mouse_region_y), (0, 0, 0))
+        camera_view_position:mathutils.Vector = context.space_data.region_3d.view_matrix.inverted().translation
+        camera_through_mouse_position_ray:mathutils.Vector = (world_space_mouse_position - camera_view_position).normalized()
         
         # find closest socket by sorting the angle between the socket to the camera and mouse to camera
         closest_socket:Optional[SocketData] = None
-        angle_threshold:float = 0.999
-        closest_angle:float = -1.0
+        closest_length:float = -1.0
         def find_closest_socket_to_mouse_ray(socket:SocketData):
-            nonlocal closest_socket, closest_angle
+            nonlocal closest_socket, closest_length
             # Don't include sockets that already have an instance
             if socket.collection_instance is not None:
                 return
             socket.is_highlighted = False
-            socket_to_camera_ray = (socket.transform.to_translation() - camera_view_position).normalized()
-            angle = camera_through_mouse_position_ray.dot(socket_to_camera_ray)
+            
+            socket_position = socket.transform.to_translation()
+            socket_to_camera_ray_foo = (socket_position - camera_view_position)
+            projected_vector = socket_to_camera_ray_foo.project(camera_through_mouse_position_ray)
+            length_squared = (socket_position - (camera_view_position + projected_vector)).length_squared
 
-            if angle > angle_threshold and angle > closest_angle:
+            if length_squared < SOCKET_RADIUS and length_squared > closest_length:
                 closest_socket = socket
-                closest_angle = angle
+                closest_length = length_squared
     
         for_each_socket(self.root_socket, find_closest_socket_to_mouse_ray)
 
         if closest_socket is not None:
             closest_socket.is_highlighted = True
-
+    
         if event.type in {'LEFTMOUSE'}:
             if event.value == 'PRESS' and  closest_socket is not None:
                 random_module = random.choice(self.modular_assets)
