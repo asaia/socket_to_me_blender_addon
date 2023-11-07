@@ -1,5 +1,18 @@
+"""
+This file contains the Blender modal operator and associated data structures used for spawning modular connected asset instances.
+
+The addon works by defining an "in" connection and a list of "out" connections for a set of collections. 
+The tool will randomly instance a collection onto the out connections of a previous instance.
+This is useful for creating networks of connected objects such as pipes, corridors, roads, and more.
+
+To use:
+    * Create a parent collection named "modular_assets".
+    * Inside the parent collection, place collections you'd like to instance.
+    * Ensure that the collections have one Empty object with the prefix IN_ and as many OUT_ empty objects as you need.
+"""
+
 from dataclasses import dataclass, field
-from typing import List, Optional, Tuple
+from typing import Callable, List, Optional
 import random
 import typing
 import bmesh
@@ -14,28 +27,61 @@ HIGHLIGHTED_COLOR = (0.5, 0.8, 1, 0.3)
 SOCKET_RADIUS = 0.15
 HIGHLIGHTED_RADIUS = 0.2
 MODULAR_ASSETS_CONTAINER_NAME = "modular_assets"
+SOCKET_OUTPUT_PREFIX = "OUT_"
+SOCKET_IN_PREFIX = "IN_"
 
 @dataclass
 class ModularAssetData:
+    """
+    ModularAssets contain the information necessary to create a collection instance at a socket.
+    You can think of the in_socket as the origin from where an asset will be spawned.
+    The out sockets are the local space transforms that determine where the next modules can be spawned.
+    """
     collection:bpy.types.Collection
     in_socket:mathutils.Matrix = mathutils.Matrix.Identity(4)
     out_sockets:list[mathutils.Matrix] = field(default_factory=list)
 
 @dataclass
 class SocketData:
+    """
+    Sockets are where modular assets can be instanced.
+    They contain a world space transform as well as a list of child sockets.
+    You can think of sockets as nodes in a graph.
+    Given a root socket, you can traverse the graph to all connected sockets.
+    """
     transform:mathutils.Matrix = mathutils.Matrix.Identity(4)
     is_highlighted = False
     out_sockets:List['SocketData'] = field(default_factory=list)
     collection_instance:Optional[bpy.types.Object] = None
 
-def create_modular_asset_from_collection(collection:bpy.types.Collection):
-    in_socket_objects = {obj.name: obj for obj in collection.objects if obj.name.startswith("IN_")}
+def create_modular_asset_from_collection(collection:bpy.types.Collection) -> ModularAssetData:
+    """
+    Creates a modular asset from the provided collection. It does this by looping through the collection's children 
+    and storing transforms on any child objects that matches the IN_ or OUT_ prefixes
+
+    Args:
+        collection (bpy.types.Collection): The collection to turn into a modular asset
+
+    Returns:
+        ModularAssetData: The newly created modular asset containing information for the in and out socket transforms
+    """
+    in_socket_objects = {obj.name: obj for obj in collection.objects if obj.name.startswith(SOCKET_IN_PREFIX)}
     in_socket = list(in_socket_objects.values())[0]
-    out_socket_objects = {obj.name: obj for obj in collection.objects if obj.name.startswith("OUT_")}
+    out_socket_objects = {obj.name: obj for obj in collection.objects if obj.name.startswith(SOCKET_OUTPUT_PREFIX)}
     out_sockets = [value.matrix_local for value in out_socket_objects.values()]
     return ModularAssetData(collection=collection, in_socket=in_socket.matrix_local, out_sockets=out_sockets)
 
 def create_instance_at_socket(socket:SocketData, modular_asset:ModularAssetData) -> bpy.types.Object:
+    """
+    Create an instance of a modular asset at the specified socket.
+
+    Args:
+        socket (SocketData): The socket where the instance will be created.
+        modular_asset (ModularAssetData): The modular asset to instance.
+
+    Returns:
+        bpy.types.Object: A reference to the created instance.
+    """
     instance_transform:mathutils.Matrix = socket.transform @ modular_asset.in_socket.inverted_safe()
     instance = bpy.data.objects.new(modular_asset.collection.name, None)
     instance.instance_type = "COLLECTION"
@@ -44,18 +90,26 @@ def create_instance_at_socket(socket:SocketData, modular_asset:ModularAssetData)
     instance.matrix_world = instance_transform
     return instance
 
-def create_sockets_from_modular_asset(world_transform:mathutils.Matrix, modular_asset:ModularAssetData):
+def create_sockets_from_modular_asset(world_transform:mathutils.Matrix, modular_asset:ModularAssetData) -> List[SocketData]:
+    """
+    Create a socket for each out socket in the provided modular asset.
+    These sockets are created in world space.
+
+    Args:
+        world_transform (mathutils.Matrix): The basis transform for the created sockets, relative to world space.
+        modular_asset (ModularAssetData): The modular asset containing local space out_socket transforms.
+
+    Returns:
+        List[SocketData]: Newly created out sockets positioned in world space.
+    """
     pivot = modular_asset.in_socket.inverted_safe()
     sockets = [SocketData(world_transform @ pivot @ local_transform) for local_transform in modular_asset.out_sockets]
     return sockets
 
-def for_each_socket(socket:SocketData, function):
-    function(socket)
-    if socket.out_sockets:
-        for socket in socket.out_sockets:
-            for_each_socket(socket, function)
+def draw_callback(self, uv_sphere_verts:List[mathutils.Vector]):
+    if self.root_socket is None:
+        return
 
-def draw(self, context, uv_sphere_verts):
     shader:typing.Any = gpu.shader.from_builtin('3D_UNIFORM_COLOR')
     gpu.state.depth_test_set('LESS_EQUAL')
 
@@ -73,6 +127,19 @@ def draw(self, context, uv_sphere_verts):
         batch.draw(shader)
 
     for_each_socket(self.root_socket, draw_socket)
+
+def for_each_socket(socket:SocketData, function:Callable[[SocketData], None]):
+    """
+    Recursively iterate over all sockets, executing the provided method on each one.
+
+    Args:
+        socket (SocketData): The current socket being processed.
+        function (Callable[[SocketData], None]): The function to apply to each socket.
+    """
+    function(socket)
+    if socket.out_sockets:
+        for socket in socket.out_sockets:
+            for_each_socket(socket, function)
 
 class SocketToMeModalOperator(bpy.types.Operator):
     """Click on a socket to spawn a random module. Right click to change module instance"""
@@ -98,7 +165,9 @@ class SocketToMeModalOperator(bpy.types.Operator):
             return {'CANCELLED'}
 
         # camera location and camera to mouse ray
-        world_space_mouse_position:mathutils.Vector = bpy_extras.view3d_utils.region_2d_to_location_3d(context.region, context.space_data.region_3d, (event.mouse_region_x, event.mouse_region_y), (0, 0, 0))
+        world_space_mouse_position:mathutils.Vector = bpy_extras.view3d_utils.region_2d_to_location_3d(context.region, 
+                                                                                                       context.space_data.region_3d, 
+                                                                                                       (event.mouse_region_x, event.mouse_region_y), mathutils.Vector())
         camera_view_position:mathutils.Vector = context.space_data.region_3d.view_matrix.inverted().translation
         camera_through_mouse_position_ray:mathutils.Vector = (world_space_mouse_position - camera_view_position).normalized()
         
@@ -161,7 +230,7 @@ class SocketToMeModalOperator(bpy.types.Operator):
             # triangulate the built-in uv sphere to draw for each socket
             new_bmesh:bmesh.types.BMesh = bmesh.new()
             bmesh.ops.create_uvsphere(new_bmesh, u_segments= 6, v_segments=4, radius=1)
-            bmesh.ops.triangulate(new_bmesh, faces=new_bmesh.faces)
+            bmesh.ops.triangulate(new_bmesh, faces = new_bmesh.faces)
             uv_sphere_verts = [mathutils.Vector(v.co.to_tuple()) for f in new_bmesh.faces for v in f.verts]
 
             # spawn starting module
@@ -172,8 +241,7 @@ class SocketToMeModalOperator(bpy.types.Operator):
             self.last_clicked_socket = self.root_socket
             
             # setup draw handler
-            args = (self, context, uv_sphere_verts)
-            self.draw_handle = bpy.types.SpaceView3D.draw_handler_add(draw, args, 'WINDOW', 'POST_VIEW')
+            self.draw_handle = bpy.types.SpaceView3D.draw_handler_add(draw_callback, (self, uv_sphere_verts), 'WINDOW', 'POST_VIEW')
 
             context.window_manager.modal_handler_add(self)
 
@@ -182,18 +250,20 @@ class SocketToMeModalOperator(bpy.types.Operator):
             self.report({'WARNING'}, "View3D not found, cannot run operator")
             return {'CANCELLED'}
 
-def menu_func(self, context):
+def menu_function(self, context):
     self.layout.operator(SocketToMeModalOperator.bl_idname, text="Socket To Me")
 
-# Register and add to the "view" menu (required to also use F3 search "Modal Draw Operator" for quick access).
 def register():
+    """
+    Register and add to the "view" menu (required to also use F3 search "Modal Draw Operator" for quick access).
+    """
     bpy.utils.register_class(SocketToMeModalOperator)
-    bpy.types.VIEW3D_MT_object.append(menu_func)
+    bpy.types.VIEW3D_MT_object.append(menu_function)
 
 
 def unregister():
     bpy.utils.unregister_class(SocketToMeModalOperator)
-    bpy.types.VIEW3D_MT_object.remove(menu_func)
+    bpy.types.VIEW3D_MT_object.remove(menu_function)
 
 if __name__ == "__main__":
     register()
