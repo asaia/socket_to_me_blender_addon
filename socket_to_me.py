@@ -13,6 +13,7 @@ SOCKET_COLOR = (0, 0.6, 1, 0.1)
 HIGHLIGHTED_COLOR = (0.5, 0.8, 1, 0.3)
 SOCKET_RADIUS = 0.15
 HIGHLIGHTED_RADIUS = 0.2
+MODULAR_ASSETS_CONTAINER_NAME = "modular_assets"
 
 @dataclass
 class ModularAssetData:
@@ -89,6 +90,7 @@ class SocketToMeModalOperator(bpy.types.Operator):
         context.area.tag_redraw()
         
         if self.root_socket is None:
+            bpy.types.SpaceView3D.draw_handler_remove(self.draw_handle, 'WINDOW')
             return {'CANCELLED'}
 
         if event.type in {'ESC'}:
@@ -109,7 +111,6 @@ class SocketToMeModalOperator(bpy.types.Operator):
             if socket.collection_instance is not None:
                 return
             socket.is_highlighted = False
-            
             socket_position = socket.transform.to_translation()
             socket_to_camera_ray_foo = (socket_position - camera_view_position)
             projected_vector = socket_to_camera_ray_foo.project(camera_through_mouse_position_ray)
@@ -123,7 +124,7 @@ class SocketToMeModalOperator(bpy.types.Operator):
 
         if closest_socket is not None:
             closest_socket.is_highlighted = True
-    
+
         if event.type in {'LEFTMOUSE'}:
             if event.value == 'PRESS' and  closest_socket is not None:
                 random_module = random.choice(self.modular_assets)
@@ -131,10 +132,15 @@ class SocketToMeModalOperator(bpy.types.Operator):
                 closest_socket.out_sockets = create_sockets_from_modular_asset(closest_socket.transform, random_module)
                 self.last_clicked_socket = closest_socket
                 return {'RUNNING_MODAL'}
-            
+
+        # Cycles through available modules
         if event.type in {'RIGHTMOUSE'}:
             if event.value == 'PRESS' and self.last_clicked_socket and self.last_clicked_socket.collection_instance:
-                random_module = random.choice(self.modular_assets)
+                last_instance = self.last_clicked_socket.collection_instance.instance_collection
+                index_of = next((i for (i, asset) in enumerate(self.modular_assets) if asset.collection is last_instance), 0)
+                next_index = (index_of + 1) % len(self.modular_assets)
+                random_module = self.modular_assets[next_index]
+
                 self.last_clicked_socket.collection_instance.instance_collection = random_module.collection
                 self.last_clicked_socket.collection_instance.matrix_world = self.last_clicked_socket.transform @ random_module.in_socket.inverted_safe()
                 self.last_clicked_socket.out_sockets = create_sockets_from_modular_asset(self.last_clicked_socket.transform, random_module)
@@ -145,8 +151,12 @@ class SocketToMeModalOperator(bpy.types.Operator):
     def invoke(self, context, event):
         if context.area.type == 'VIEW_3D':            
             # initilize modular assets
-            pipe_collection_names:list[str] = ["pipe_T", "pipeStraight", "pipe_bent", "pipe_bent_02", "pipe_handle", "pipe_u"]
-            self.modular_assets = [create_modular_asset_from_collection(bpy.data.collections.get(collection_name)) for collection_name in pipe_collection_names]
+            # modular assets should be stored in a container named MODULAR_ASSETS_CONTAINER_NAME
+            modular_asset_container:bpy.types.Collection = bpy.data.collections.get(MODULAR_ASSETS_CONTAINER_NAME)
+            if modular_asset_container is None:
+                print(f'Could not find assets to instance. Create a parent collection named {MODULAR_ASSETS_CONTAINER_NAME} and put all modular asset collections inside it')
+                return
+            self.modular_assets = [create_modular_asset_from_collection(collection) for collection in modular_asset_container.children]
 
             # triangulate the built-in uv sphere to draw for each socket
             new_bmesh:bmesh.types.BMesh = bmesh.new()
