@@ -157,6 +157,8 @@ class SocketToMeModalOperator(bpy.types.Operator):
     bl_options = {'REGISTER', 'UNDO'}
     bl_label = "Socket to me tool"
 
+    __slots__ = ("root_socket", "last_clicked_socket", "modular_assets", "draw_handle")
+
     def __init__(self):
         self.root_socket:Optional[SocketData] = None
         self.last_clicked_socket:Optional[SocketData] = None
