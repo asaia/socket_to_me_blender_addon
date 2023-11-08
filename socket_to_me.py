@@ -69,7 +69,7 @@ def create_modular_asset_from_collection(collection:bpy.types.Collection) -> Mod
     in_socket = list(in_socket_objects.values())[0]
     out_socket_objects = {obj.name: obj for obj in collection.objects if obj.name.startswith(SOCKET_OUTPUT_PREFIX)}
     out_sockets = [value.matrix_local for value in out_socket_objects.values()]
-    return ModularAssetData(collection=collection, in_socket=in_socket.matrix_local, out_sockets=out_sockets)
+    return ModularAssetData(collection = collection, in_socket = in_socket.matrix_local, out_sockets = out_sockets)
 
 def create_instance_at_socket(socket:SocketData, modular_asset:ModularAssetData) -> bpy.types.Object:
     """
@@ -106,6 +106,17 @@ def create_sockets_from_modular_asset(world_transform:mathutils.Matrix, modular_
     sockets = [SocketData(world_transform @ pivot @ local_transform) for local_transform in modular_asset.out_sockets]
     return sockets
 
+def does_socket_have_instance(socket:SocketData) -> bool:
+    """
+    Sockets are empty until the user clicks on them to spawn an instance
+    Only empty sockets are selectable and should be rendered
+    Args:
+        socket (SocketData): the socket to test
+    Returns:
+        bool: True if the socket has an instance spawned at its transform
+    """
+    return socket.collection_instance is not None
+
 def draw_callback(self, uv_sphere_verts:List[mathutils.Vector]):
     if self.root_socket is None:
         return
@@ -114,8 +125,7 @@ def draw_callback(self, uv_sphere_verts:List[mathutils.Vector]):
     gpu.state.depth_test_set('LESS_EQUAL')
 
     def draw_socket(socket:SocketData):
-        # Don't draw sockets that already have an instance
-        if socket.collection_instance is not None:
+        if does_socket_have_instance(socket):
             return
 
         scale = HIGHLIGHTED_RADIUS if socket.is_highlighted else SOCKET_RADIUS
@@ -155,12 +165,8 @@ class SocketToMeModalOperator(bpy.types.Operator):
 
     def modal(self, context, event):
         context.area.tag_redraw()
-        
-        if self.root_socket is None:
-            bpy.types.SpaceView3D.draw_handler_remove(self.draw_handle, 'WINDOW')
-            return {'CANCELLED'}
 
-        if event.type in {'ESC'}:
+        if event.type in {'ESC'} or self.root_socket is None:
             bpy.types.SpaceView3D.draw_handler_remove(self.draw_handle, 'WINDOW')
             return {'CANCELLED'}
 
@@ -171,18 +177,19 @@ class SocketToMeModalOperator(bpy.types.Operator):
         camera_view_position:mathutils.Vector = context.space_data.region_3d.view_matrix.inverted().translation
         camera_through_mouse_position_ray:mathutils.Vector = (world_space_mouse_position - camera_view_position).normalized()
         
-        # find closest socket by sorting the angle between the socket to the camera and mouse to camera
+        # find the closest socket by projecting the camera to object ray to get the closest point along that ray to the object
+        # then do a distance check to see if we are within the radius of the object
         closest_socket:Optional[SocketData] = None
         closest_length:float = -1.0
         def find_closest_socket_to_mouse_ray(socket:SocketData):
             nonlocal closest_socket, closest_length
-            # Don't include sockets that already have an instance
-            if socket.collection_instance is not None:
+            # don't include sockets that already have an instance
+            if does_socket_have_instance(socket):
                 return
             socket.is_highlighted = False
             socket_position = socket.transform.to_translation()
-            socket_to_camera_ray_foo = (socket_position - camera_view_position)
-            projected_vector = socket_to_camera_ray_foo.project(camera_through_mouse_position_ray)
+            socket_to_camera_ray = (socket_position - camera_view_position)
+            projected_vector = socket_to_camera_ray.project(camera_through_mouse_position_ray)
             length_squared = (socket_position - (camera_view_position + projected_vector)).length_squared
 
             if length_squared < SOCKET_RADIUS and length_squared > closest_length:
@@ -202,7 +209,7 @@ class SocketToMeModalOperator(bpy.types.Operator):
                 self.last_clicked_socket = closest_socket
                 return {'RUNNING_MODAL'}
 
-        # Cycles through available modules
+        # cycles through available modules
         if event.type in {'RIGHTMOUSE'}:
             if event.value == 'PRESS' and self.last_clicked_socket and self.last_clicked_socket.collection_instance:
                 last_instance = self.last_clicked_socket.collection_instance.instance_collection
@@ -220,7 +227,6 @@ class SocketToMeModalOperator(bpy.types.Operator):
     def invoke(self, context, event):
         if context.area.type == 'VIEW_3D':            
             # initilize modular assets
-            # modular assets should be stored in a container named MODULAR_ASSETS_CONTAINER_NAME
             modular_asset_container:bpy.types.Collection = bpy.data.collections.get(MODULAR_ASSETS_CONTAINER_NAME)
             if modular_asset_container is None:
                 print(f'Could not find assets to instance. Create a parent collection named {MODULAR_ASSETS_CONTAINER_NAME} and put all modular asset collections inside it')

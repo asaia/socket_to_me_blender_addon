@@ -1,4 +1,3 @@
-
 bl_info = {
     "name": "Socket To Me",
     "author": "Andy Saia",
@@ -10,7 +9,6 @@ bl_info = {
 if "bpy" in locals():
     import importlib
     importlib.reload(socket_to_me)
-
 else:
     from . import socket_to_me
 
