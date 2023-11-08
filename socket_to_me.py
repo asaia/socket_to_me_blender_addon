@@ -152,7 +152,7 @@ def for_each_socket(socket:SocketData, function:Callable[[SocketData], None]):
             for_each_socket(socket, function)
 
 class SocketToMeModalOperator(bpy.types.Operator):
-    """Click on a socket to spawn a random module. Right click to change module instance"""
+    """Click on a socket to spawn a random module. Right click to cycle through module instances"""
     bl_idname = "object.modal_socket_to_me"
     bl_options = {'REGISTER', 'UNDO'}
     bl_label = "Socket to me tool"
@@ -261,7 +261,7 @@ def menu_function(self, context):
 
 def register():
     """
-    Register and add to the "view" menu (required to also use F3 search "Modal Draw Operator" for quick access).
+    Register and add to the "view" menu (required to also use F3 search "Socket To Me" for quick access).
     """
     bpy.utils.register_class(SocketToMeModalOperator)
     bpy.types.VIEW3D_MT_object.append(menu_function)
