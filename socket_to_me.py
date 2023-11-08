@@ -66,10 +66,13 @@ def create_modular_asset_from_collection(collection:bpy.types.Collection) -> Mod
         ModularAssetData: The newly created modular asset containing information for the in and out socket transforms
     """
     in_socket_objects = {obj.name: obj for obj in collection.objects if obj.name.startswith(SOCKET_IN_PREFIX)}
-    in_socket = list(in_socket_objects.values())[0]
+    # if no socket is found the default is the collection's pivot
+    in_socket = mathutils.Matrix.Identity(4)
+    if in_socket_objects:
+        in_socket = list(in_socket_objects.values())[0].matrix_local
     out_socket_objects = {obj.name: obj for obj in collection.objects if obj.name.startswith(SOCKET_OUTPUT_PREFIX)}
     out_sockets = [value.matrix_local for value in out_socket_objects.values()]
-    return ModularAssetData(collection = collection, in_socket = in_socket.matrix_local, out_sockets = out_sockets)
+    return ModularAssetData(collection = collection, in_socket = in_socket, out_sockets = out_sockets)
 
 def create_instance_at_socket(socket:SocketData, modular_asset:ModularAssetData) -> bpy.types.Object:
     """
@@ -232,7 +235,7 @@ class SocketToMeModalOperator(bpy.types.Operator):
             modular_asset_container:bpy.types.Collection = bpy.data.collections.get(MODULAR_ASSETS_CONTAINER_NAME)
             if modular_asset_container is None:
                 print(f'Could not find assets to instance. Create a parent collection named {MODULAR_ASSETS_CONTAINER_NAME} and put all modular asset collections inside it')
-                return
+                return {'CANCELLED'}
             self.modular_assets = [create_modular_asset_from_collection(collection) for collection in modular_asset_container.children]
 
             # triangulate the built-in uv sphere to draw for each socket
