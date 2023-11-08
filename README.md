@@ -20,3 +20,5 @@ This is ideal for any kind of branching set of assets such as pipes, roads, corr
 ### After enabling the addon use F3, or Tab for industry standard keymapping, to search and type "Socket To Me":
 
 ![quick search](images/quick_search.jpg)
+
+Examples folder uses the modular pipe assets by user DJMaesen on [Sketchfab](https://sketchfab.com/3d-models/modular-pipes-f43677d2d1014669b7c7a9f220d46eb3)
