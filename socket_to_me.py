@@ -30,7 +30,7 @@ MODULAR_ASSETS_CONTAINER_NAME = "modular_assets"
 SOCKET_OUTPUT_PREFIX = "OUT_"
 SOCKET_IN_PREFIX = "IN_"
 
-@dataclass
+@dataclass(slots=True)
 class ModularAssetData:
     """
     ModularAssets contain the information necessary to create a collection instance at a socket.
@@ -41,7 +41,7 @@ class ModularAssetData:
     in_socket:mathutils.Matrix = mathutils.Matrix.Identity(4)
     out_sockets:list[mathutils.Matrix] = field(default_factory=list)
 
-@dataclass
+@dataclass(slots=True)
 class SocketData:
     """
     Sockets are where modular assets can be instanced.
@@ -50,7 +50,7 @@ class SocketData:
     Given a root socket, you can traverse the graph to all connected sockets.
     """
     transform:mathutils.Matrix = mathutils.Matrix.Identity(4)
-    is_highlighted = False
+    is_highlighted:bool = field(default=False, init=True)
     out_sockets:List['SocketData'] = field(default_factory=list)
     collection_instance:Optional[bpy.types.Object] = None
 
